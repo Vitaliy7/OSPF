@@ -1,0 +1,132 @@
+---
+- name: OSPF
+  hosts: all
+  become: yes
+  vars_files:
+    - defaults/main.yml
+    
+  #Устанавливает необходимые утилиты
+  tasks:
+  - name:
+    apt:
+      name:
+        - vim
+        - traceroute
+        - tcpdump
+        - net-tools
+      state: present
+      update_cache: true
+      
+  #Отключаем фаерволл   
+  - name: disable ufw service
+    service:
+      name: ufw
+      state: stopped
+      enabled: false
+      
+  #Добавляем gpg-ключ  репозитория
+  - name: add gpg frrouting.org
+    apt_key:
+      url: "https://deb.frrouting.org/frr/keys.asc"
+      state: present
+      
+  #Устанавливаем репозиторий для скачивания FRR
+  - name: add frr repo
+    apt_repository:
+      repo: 'deb https://deb.frrouting.org/frr {{ ansible_distribution_release }} frr-stable'
+      state: present
+      
+  #Скачиваем необходимые пакеты и устанавливаем FRR
+  - name: install FRR packages
+    apt:
+      name:
+      - frr
+      - frr-pythontools
+      state: present
+      update_cache: true
+      
+  #Включаем форвардинг транзитного траффика
+  - name: set up forward packages across routers
+    sysctl:
+      name: net.ipv4.conf.all.forwarding
+      value: '1'
+      state: present
+      
+  #Включаем ospf в файле daemons
+  - name: change frr daemons for ospfd
+    lineinfile:
+      path: /etc/frr/daemons
+      regexp: '^ospfd='
+      line: ospfd=yes
+      
+  #Включаем zebra в файле daemons
+  - name: change frr daemons for zebra
+    lineinfile:
+      path: /etc/frr/daemons
+      insertafter: "^ospfd=yes"
+      line: zebra=yes
+      create: yes
+      
+  #Копируем темплейт файла frr.conf на хосты
+  - name: base setup OSPF
+    template:
+      src: frr.conf.j2
+      dest: /etc/frr/frr.conf
+      owner: frr
+      group: frr
+      mode: 0640
+      
+  #Перезапускаем frr.service
+  - name: restart & enable frr
+    service:
+      name: frr.service
+      state: restarted
+
+  # Включаем разрешение асинхронного роутинга
+  - name: set up asynchronous routing
+    sysctl:
+      name: net.ipv4.conf.all.rp_filter
+      value: '0'
+      state: present
+    tags:
+      - asymmetric
+
+  # Изменяем стоимость интерфейса enp0s8 в router1 при помощи темплейта frr.conf
+  - name: set up OSPF
+    template:
+      src: asymmetric_frr.conf.j2
+      dest: /etc/frr/frr.conf
+      owner: frr
+      group: frr
+      mode: 0640
+    tags:
+      - asymmetric
+
+  # Перезапускаем сервис FRR и устанавливаем его в автозагрузку
+  - name: restart FRR
+    service:
+      name: frr.service
+      state: restarted
+      enabled: true
+    tags:
+      - asymmetric
+
+  # Изменяем файл frr.conf
+  - name: set up OSPF
+    template:
+      src: symmetric_frr.conf.j2
+      dest: /etc/frr/frr.conf
+      owner: frr
+      group: frr
+      mode: 0640
+    tags:
+      - symmetric
+
+  # Перезапускаем сервис FRR и устанавливаем его в автозагрузку
+  - name: restart FRR
+    service:
+      name: frr.service
+      state: restarted
+      enabled: true
+    tags:
+      - symmetric
